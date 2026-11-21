@@ -284,6 +284,12 @@ body.locked .app{display:none}
  .dw-top{display:none}
 }
 @media (max-width:860px){.tiles,.stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}.tile{padding:12px 8px}}
+
+#syncBadge{margin-top:auto;padding-top:10px}#syncBadge+#userBox{margin-top:0;padding-top:6px}
+.sb{width:100%;border:0;border-radius:8px;padding:5px 8px;background:rgba(255,255,255,.1);color:inherit;cursor:pointer;font:inherit;font-size:calc(12px*var(--fz,1));text-align:start}
+.sb i{font-style:normal;display:inline-block;width:1.1em}.sb.ok i{color:#7fe0a0}.sb.er{background:rgba(220,90,80,.35)}.sb.bz i{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media print{#syncBadge{display:none}}
 </style>
 </head>
 <body>
@@ -298,6 +304,7 @@ body.locked .app{display:none}
   <a href="#persons"></a><a href="#items"></a><a href="#reports"></a>
   <div class="sep"></div>
   <a href="#settings"></a>
+  <div id="syncBadge"></div>
   <div id="userBox"></div>
   <div id="dwSide"></div>
  </nav>
@@ -342,8 +349,8 @@ function loadDB(){
  return fresh();
 }
 let DB=loadDB();
-let saveTimer=0;
-function save(){try{localStorage.setItem(KEY,JSON.stringify(DB));storageOK=true}catch(e){storageOK=false;toast('تعذر الحفظ التلقائي بالمتصفح. حمّل نسخة احتياطية من الإعدادات.',1)}}
+let saveTimer=0;let SYNC_BUSY=false;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(DB));storageOK=true;if(typeof syncSoon==='function')syncSoon()}catch(e){storageOK=false;toast('تعذر الحفظ التلقائي بالمتصفح. حمّل نسخة احتياطية من الإعدادات.',1)}}
 const S=()=>DB.settings;
 
 /* ========== بحث سريع ========== */
@@ -1106,7 +1113,7 @@ const isAdmin=()=>!!CU&&CU.role==='admin';
 const can=a=>isAdmin()||(!!CU&&a==='del'?CU.canDel!==false:true);
 function logAct(a,o,x){if(!DB.log)DB.log=[];DB.log.push({ts:Date.now(),d:today(),t:nowT(),u:curName(),a,o:o||'',x:x||''});if(DB.log.length>20000)DB.log.splice(0,DB.log.length-20000)}
 function stampDoc(doc,isNew){const n=curName();
- if(isNew||!doc.user){doc.user=n;doc.time=nowT()}
+ if(isNew||!doc.user){doc.user=n;doc.time=nowT();doc.cts=Date.now()}
  else{doc.editedBy=n;doc.editedAt=today()+' '+nowT();(doc.edits=doc.edits||[]).push({u:n,at:doc.editedAt})}}
 function stampInfo(d){return d.isNew?'قائمة جديدة — المستخدم: '+esc(curName()):'أُدخلت بواسطة '+esc(d.user||'')+' — '+dmy(d.date)+' '+esc(d.time||'')+(d.editedBy?' — آخر تعديل: '+esc(d.editedBy)+' '+esc(d.editedAt||''):'')}
 function makeUser(name,user,pw,role){const salt=newSalt();return{id:(DB.users.reduce((m,u)=>Math.max(m,u.id),0)||0)+1,name,user,salt,hash:hashPw(pw,salt),role,active:true,canDel:true,created:today()+' '+nowT()}}
@@ -1123,7 +1130,7 @@ function showGate(){
   <div class="f"><label>اسم الدخول</label><input id="g_user" autocomplete="off" dir="ltr"></div>
   <div class="f"><label>كلمة المرور</label><input id="g_pw" type="password" dir="ltr"></div>
   <div class="f"><label>تأكيد كلمة المرور</label><input id="g_pw2" type="password" dir="ltr"></div>
-  <button class="btn p" id="g_go">إنشاء والدخول</button><div class="gerr" id="g_err"></div>`
+  <button class="btn p" id="g_go">إنشاء والدخول</button><button class="btn" id="g_link">ربط هذا الجهاز بحساب سحابي موجود</button><div class="gerr" id="g_err"></div>`
  :`<div class="f"><label>اسم الدخول</label><input id="g_user" autocomplete="off" dir="ltr"></div>
   <div class="f"><label>كلمة المرور</label><input id="g_pw" type="password" dir="ltr"></div>
   <button class="btn p" id="g_go">دخول</button><div class="gerr" id="g_err"></div>`);
@@ -1136,7 +1143,8 @@ function showGate(){
   if(!u||!u.active||hashPw(pw,u.salt)!==u.hash){failN++;err(failN>=5?'محاولات كثيرة، انتظر قليلاً ثم أعد المحاولة':'اسم الدخول أو كلمة المرور غير صحيحة');if(failN>=5){$('#g_go').disabled=true;setTimeout(()=>{failN=0;const b=$('#g_go');if(b)b.disabled=false},15000)}
    if(u){logAct('محاولة دخول فاشلة','كلمة مرور خاطئة');DB.log[DB.log.length-1].u=u.name;save()}return}
   failN=0;setSession(u);logAct('دخول','تسجيل دخول');save();enter()};
- $('#g_go').onclick=go;bg.onkeydown=e=>{if(e.key==='Enter')go()};
+ $('#g_go').onclick=go;
+ const lk=$('#g_link');if(lk)lk.onclick=()=>{bg.innerHTML=gateHTML(`<p class="muted">الصق «رمز الربط» المنسوخ من الحاسوب (الإعدادات ← المزامنة السحابية).</p><div class="f"><textarea id="g_code" dir="ltr" rows="4" style="width:100%"></textarea></div><button class="btn p" id="g_ok">ربط</button><button class="btn" id="g_back">رجوع</button><div class="gerr" id="g_err"></div>`);$('#g_back').onclick=showGate;$('#g_ok').onclick=async()=>{$('#g_err').textContent='جارٍ الربط...';const m=await syLinkFromGate($('#g_code').value);if(m){$('#g_err').textContent=m;return}showGate()}};bg.onkeydown=e=>{if(e.key==='Enter')go()};
  setTimeout(()=>($(first?'#g_name':'#g_user')||{focus(){}}).focus(),50);
 }
 function enter(){const g=document.getElementById('gate');if(g)g.remove();document.body.classList.remove('locked');S().user=curName();applyTheme();mountUserBox();location.hash=location.hash||'#home';route()}
@@ -1231,6 +1239,128 @@ function renderLookTab(tb){
  else renderDateTab(body);
 }
 
+/* ========== المزامنة السحابية (Firebase / Firestore عبر REST) ========== */
+const SYNC_CFG_KEY='fv_sync_cfg',SYNC_ST_KEY='fv_sync_state';
+const SYNC_COLS=[['sales','sale'],['purchases','purchase'],['transfers','transfer'],['cash','cash'],['persons',null],['items',null],['users',null]];
+const SYNC_SET=['company','phone','address','rate','toman','rmb','roundTo','defWh','defPricing','defCur','cashOpenIqd','cashOpenUsd'];
+const SYNC_META=['warehouses','groups','expAccts'];
+let SY={cfg:null,st:{h:{},u:{},dirty:{},cur:'',last:0},status:'off',msg:'',busy:false,timer:0,tok:null,tokExp:0,uid:'',pulled:0};
+function syLoad(){try{SY.cfg=JSON.parse(localStorage.getItem(SYNC_CFG_KEY)||'null')}catch(e){}try{const s=JSON.parse(localStorage.getItem(SYNC_ST_KEY)||'null');if(s)SY.st=Object.assign(SY.st,s)}catch(e){}SY.status=SY.cfg&&SY.cfg.on?'idle':'off'}
+function syPersist(){try{localStorage.setItem(SYNC_ST_KEY,JSON.stringify(SY.st))}catch(e){}}
+function syCfgSave(c){SY.cfg=c;try{if(c)localStorage.setItem(SYNC_CFG_KEY,JSON.stringify(c));else localStorage.removeItem(SYNC_CFG_KEY)}catch(e){}}
+function syReset(){SY.st={h:{},u:{},dirty:{},cur:'',last:0};SY.tok=null;SY.uid='';try{localStorage.removeItem(SYNC_ST_KEY)}catch(e){}}
+const syRid=()=>[...crypto.getRandomValues(new Uint8Array(7))].map(b=>b.toString(36).padStart(2,'0')).join('').slice(0,10);
+function syHash(s){let h1=0xdeadbeef,h2=0x41c6ce57;for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (4294967296*(2097151&h2)+(h1>>>0)).toString(36)+s.length}
+/* كل السجلات الحالية: المفتاح -> {col,obj} */
+function syRecs(){const m=new Map();
+ for(const[col]of SYNC_COLS)for(const o of DB[col]||[]){if(!o._k)o._k=syRid();m.set(col+'.'+o._k,{col,obj:o,val:o})}
+ for(const k of SYNC_META)m.set('meta.'+k,{col:'meta',val:DB[k]});
+ const set={};for(const k of SYNC_SET)set[k]=S()[k];m.set('meta.settings',{col:'meta',val:set});
+ for(const r of DB.log||[]){if(!r._k)r._k=syRid();m.set('log.'+r._k,{col:'log',obj:r,val:r})}
+ return m}
+const syPrefix=k=>k.slice(0,k.indexOf('.'));
+function syScan(){const recs=syRecs(),now=Date.now();let n=0;
+ for(const[k,r]of recs){const h=syHash(JSON.stringify(r.val));if(SY.st.h[k]!==h){SY.st.h[k]=h;SY.st.u[k]=now+(n++%1000)/1000;SY.st.dirty[k]=1}}
+ for(const k of Object.keys(SY.st.h)){if(!recs.has(k)&&!k.startsWith('meta.')&&!k.startsWith('log.')){delete SY.st.h[k];SY.st.u[k]=now;SY.st.dirty[k]='del'}}
+ syPersist()}
+/* ---- الاتصال ---- */
+const syBase=()=>({fs:(SY.cfg.fsBase||'https://firestore.googleapis.com'),au:(SY.cfg.authBase||'https://identitytoolkit.googleapis.com')});
+async function syFetch(url,body,tok){const r=await fetch(url,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},tok?{Authorization:'Bearer '+tok}:{}),body:JSON.stringify(body)});
+ let j=null;try{j=await r.json()}catch(e){}if(!r.ok){const m=(j&&(j.error&&(j.error.message||j.error.status)))||('HTTP '+r.status);const e=new Error(m);e.http=r.status;throw e}return j}
+async function syAuth(){if(SY.tok&&Date.now()<SY.tokExp)return;const c=SY.cfg,b=syBase();
+ const j=await syFetch(`${b.au}/v1/accounts:signInWithPassword?key=${encodeURIComponent(c.apiKey)}`,{email:c.email,password:c.password,returnSecureToken:true});
+ SY.tok=j.idToken;SY.uid=j.localId;SY.tokExp=Date.now()+(+j.expiresIn||3600)*1000-120000}
+const syParent=()=>`projects/${SY.cfg.projectId}/databases/(default)/documents/orgs/${SY.uid}`;
+const syDocId=k=>k.replace(/[^A-Za-z0-9._-]/g,'_');
+async function syPush(){const keys=Object.keys(SY.st.dirty);if(!keys.length)return 0;const recs=syRecs(),b=syBase();let done=0;
+ for(let i=0;i<keys.length;i+=200){const part=keys.slice(i,i+200);const writes=[];
+  for(const k of part){const del=SY.st.dirty[k]==='del';const r=recs.get(k);if(!del&&!r)continue;
+   writes.push({update:{name:`${syParent()}/records/${syDocId(k)}`,fields:{k:{stringValue:k},j:{stringValue:del?'':JSON.stringify(r.val)},u:{doubleValue:SY.st.u[k]||Date.now()},d:{booleanValue:del}}},updateTransforms:[{fieldPath:'s',setToServerValue:'REQUEST_TIME'}]})}
+  if(writes.length)await syFetch(`${b.fs}/v1/projects/${SY.cfg.projectId}/databases/(default)/documents:commit`,{writes},SY.tok);
+  for(const k of part)delete SY.st.dirty[k];done+=part.length;syPersist()}
+ return done}
+function syApply(k,rec){
+ const col=syPrefix(k);const lu=SY.st.u[k]||0;
+ if(SY.st.dirty[k]&&lu>=rec.u)return false;
+ if(col==='meta'){const nm=k.slice(5);if(rec.d)return false;const v=JSON.parse(rec.j);
+  if(nm==='settings'){Object.assign(S(),v)}else DB[nm]=v;
+  SY.st.h[k]=syHash(JSON.stringify(v));SY.st.u[k]=rec.u;delete SY.st.dirty[k];return true}
+ const arr=col==='log'?(DB.log=DB.log||[]):DB[col];if(!arr)return false;const id=k.slice(col.length+1);
+ const i=arr.findIndex(o=>o._k===id);
+ if(rec.d){if(i>=0)arr.splice(i,1);delete SY.st.h[k];SY.st.u[k]=rec.u;delete SY.st.dirty[k];return true}
+ const v=JSON.parse(rec.j);v._k=id;
+ if(i>=0){const o=arr[i];for(const x of Object.keys(o))delete o[x];Object.assign(o,v)}else arr.push(v);
+ SY.st.h[k]=syHash(JSON.stringify(v));SY.st.u[k]=rec.u;delete SY.st.dirty[k];return true}
+async function syPull(){const b=syBase();let total=0,guard=0;
+ for(;;){const q={structuredQuery:{from:[{collectionId:'records'}],orderBy:[{field:{fieldPath:'s'},direction:'ASCENDING'}],limit:300}};
+  if(SY.st.cur)q.structuredQuery.where={fieldFilter:{field:{fieldPath:'s'},op:'GREATER_THAN',value:{timestampValue:SY.st.cur}}};
+  const res=await syFetch(`${b.fs}/v1/${syParent()}:runQuery`,q,SY.tok);const docs=(res||[]).filter(x=>x.document).map(x=>x.document);
+  SY.pulled=0;let ch=0;
+  for(const d of docs){const f=d.fields||{};const k=f.k&&f.k.stringValue;if(!k)continue;
+   const rec={j:f.j?f.j.stringValue:'',u:f.u?(+(f.u.doubleValue??f.u.integerValue)):0,d:!!(f.d&&f.d.booleanValue)};
+   try{if(syApply(k,rec))ch++}catch(e){console.error('sync apply',k,e)}
+   const s=f.s&&f.s.timestampValue;if(s&&(!SY.st.cur||s>SY.st.cur))SY.st.cur=s}
+  total+=ch;syPersist();if(docs.length<300||++guard>200)break}
+ return total}
+/* منع تكرار أرقام القوائم بين الأجهزة */
+function syFixNumbers(){let ch=0;
+ for(const[col,sq]of SYNC_COLS){if(!sq)continue;const seen={};const arr=(DB[col]||[]).slice().sort((a,b)=>(a.cts||0)-(b.cts||0));
+  for(const d of arr){if(seen[d.no]){d.no=DB.seq[sq]++;ch++}seen[d.no]=1}
+  const mx=Math.max(0,...DB[col].map(d=>+d.no||0));if(DB.seq[sq]<=mx)DB.seq[sq]=mx+1}
+ const mp=Math.max(0,...DB.persons.map(p=>+p.id||0));if(DB.seq.person<=mp)DB.seq.person=mp+1;
+ const mi=Math.max(0,...DB.items.map(i=>+i.code||0).filter(isFinite));if(DB.seq.item<=mi)DB.seq.item=mi+1;
+ const mt=Math.max(0,...[...DB.sales,...DB.purchases,...DB.transfers,...DB.cash].map(d=>+d.ts||0));if(DB.seq.ts<=mt)DB.seq.ts=mt+1;
+ return ch}
+function sySetStatus(s,m){SY.status=s;SY.msg=m||'';syBadge()}
+function syBadge(){const e=document.getElementById('syncBadge');if(!e)return;
+ if(!SY.cfg||!SY.cfg.on){e.innerHTML='';return}
+ const M={idle:['●','متصل','ok'],busy:['⟳','جارٍ المزامنة...','bz'],off:['○','المزامنة متوقفة',''],err:['!','تعذر الاتصال','er']};const x=M[SY.status]||M.idle;
+ e.innerHTML=`<button class="sb ${x[2]}" title="${esc(SY.msg||'')}"><i>${x[0]}</i> ${x[1]}</button>`;e.firstChild.onclick=()=>{syNow(true)}}
+function syLiveRefresh(){const h=(location.hash||'#home').slice(1);if(['home','persons','items','reports','settings'].includes(h)&&!document.querySelector('.modalbg')&&!['INPUT','SELECT','TEXTAREA'].includes((document.activeElement||{}).tagName))route();else toast('وصلت تحديثات جديدة من جهاز آخر')}
+async function syNow(manual){
+ if(!SY.cfg||!SY.cfg.on||SY.busy)return;if(!navigator.onLine&&!manual){sySetStatus('err','لا يوجد إنترنت');return}
+ SY.busy=true;SYNC_BUSY=true;sySetStatus('busy');let pulled=0;
+ try{await syAuth();syScan();pulled=await syPull();if(pulled)syFixNumbers();syScan();await syPush();SY.st.last=Date.now();syPersist();
+  if(pulled){SYNC_BUSY=true;try{localStorage.setItem(KEY,JSON.stringify(DB))}catch(e){}
+   if(CU){const u=DB.users.find(x=>x.id===CU.id);if(u&&u.active)CU=u;else if(!u||!u.active){toast('تم إيقاف حسابك أو حذفه',1);logout()}}
+   if(typeof refreshLists==='function')refreshLists();if(typeof applyTheme==='function')applyTheme();if(CU)syLiveRefresh()}
+  sySetStatus('idle','آخر مزامنة: '+new Date().toLocaleTimeString('en-GB'))}
+ catch(e){const m=e.http===400||e.http===401?'بيانات الحساب غير صحيحة':e.http===403?'القواعد (Rules) لا تسمح — راجع الإعداد':(e.message||'خطأ');sySetStatus('err',m);SY.tok=null;console.warn('sync',e)}
+ finally{SY.busy=false;SYNC_BUSY=false;const t=document.getElementById('syncInfo');if(t)syInfoFill()}}
+function syncSoon(){if(!SY.cfg||!SY.cfg.on||SYNC_BUSY)return;clearTimeout(SY.timer);SY.timer=setTimeout(()=>syNow(),1500)}
+function syStart(){syLoad();syBadge();if(SY.cfg&&SY.cfg.on&&!window._syTimerOn){window._syTimerOn=1;setInterval(()=>{if(!document.hidden)syNow()},15000);window.addEventListener('online',()=>syNow());document.addEventListener('visibilitychange',()=>{if(!document.hidden)syNow()});setTimeout(()=>syNow(),800)}}
+/* رمز الربط */
+const syCode=c=>btoa(unescape(encodeURIComponent(JSON.stringify({a:c.apiKey,p:c.projectId,e:c.email,w:c.password}))));
+function syDecode(t){try{const o=JSON.parse(decodeURIComponent(escape(atob(t.trim()))));if(o.a&&o.p&&o.e&&o.w)return{apiKey:o.a,projectId:o.p,email:o.e,password:o.w,on:true}}catch(e){}return null}
+function syInfoFill(){const t=document.getElementById('syncInfo');if(!t)return;
+ const nd=Object.keys(SY.st.dirty).length;t.innerHTML=`الحالة: <b>${SY.status==='idle'?'متصل':SY.status==='busy'?'جارٍ المزامنة':SY.status==='err'?'خطأ':'متوقفة'}</b>${SY.msg?' — '+esc(SY.msg):''}<br>آخر مزامنة ناجحة: ${SY.st.last?new Date(SY.st.last).toLocaleString('en-GB'):'—'} — بانتظار الرفع: ${nd}`}
+function renderSyncTab(tb){
+ const c=SY.cfg||{};
+ tb.innerHTML=`<p class="muted" style="margin-top:0">اربط الحاسوب والموبايل عبر الإنترنت: أي حركة تسويها بجهاز تظهر بالأجهزة الثانية خلال ثواني. البرنامج يبقى يشتغل بدون إنترنت، وتتزامن الحركات أول ما يرجع الاتصال. إعداد حساب Firebase مجاني، وخطواته بملف «دليل-المزامنة.txt».</p>
+ <div class="hdr w2"><div class="f"><label>API Key</label><input id="sy_k" dir="ltr" value="${esc(c.apiKey||'')}"></div><div class="f"><label>Project ID</label><input id="sy_p" dir="ltr" value="${esc(c.projectId||'')}"></div>
+ <div class="f"><label>إيميل حساب المزامنة</label><input id="sy_e" dir="ltr" value="${esc(c.email||'')}"></div><div class="f"><label>كلمة مرور حساب المزامنة</label><input id="sy_w" type="password" dir="ltr" value="${esc(c.password||'')}"></div></div>
+ <div class="bar" style="margin:10px 0"><button class="btn p" id="sy_on">${c.on?'حفظ وإعادة المزامنة':'تفعيل المزامنة'}</button><button class="btn" id="sy_now"${c.on?'':' disabled'}>مزامنة الآن</button><button class="btn d" id="sy_off"${c.on?'':' disabled'}>إيقاف المزامنة</button></div>
+ <div class="note" id="syncInfo"></div>
+ ${c.on?`<h4 style="margin:16px 0 6px">ربط جهاز جديد (الموبايل)</h4><p class="muted" style="margin:0 0 6px">انسخ هذا الرمز، وبالموبايل ببداية البرنامج اضغط «ربط هذا الجهاز بحساب سحابي» والصقه. الرمز فيه كلمة مرور حساب المزامنة، فلا تشاركه مع أحد.</p><div class="bar"><input id="sy_code" readonly dir="ltr" value="${esc(syCode(c))}" style="flex:1"><button class="btn" id="sy_copy">نسخ</button></div>`:''}`;
+ syInfoFill();
+ $('#sy_on').onclick=async()=>{const n={apiKey:$('#sy_k').value.trim(),projectId:$('#sy_p').value.trim(),email:$('#sy_e').value.trim(),password:$('#sy_w').value,on:true};
+  if(!n.apiKey||!n.projectId||!n.email||!n.password)return toast('أكمل كل الحقول',1);
+  const old=SY.cfg;syCfgSave(Object.assign({},old&&old.fsBase?{fsBase:old.fsBase,authBase:old.authBase}:{},n));SY.tok=null;
+  if(!old||old.projectId!==n.projectId||old.email!==n.email)syReset();
+  logAct('تعديل إعدادات','تفعيل المزامنة السحابية');save();sySetStatus('busy');await syNow(true);
+  if(SY.status==='err')toast('فشل الاتصال: '+SY.msg,1);else{toast('تم تفعيل المزامنة');syStart()}renderSyncTab(tb)};
+ $('#sy_now').onclick=async()=>{await syNow(true);toast(SY.status==='err'?'فشل: '+SY.msg:'تمت المزامنة',SY.status==='err')};
+ $('#sy_off').onclick=()=>confirmBox('إيقاف المزامنة بهذا الجهاز؟ بياناته تبقى عليه كما هي.',()=>{syCfgSave(Object.assign({},SY.cfg,{on:false}));SY.status='off';logAct('تعديل إعدادات','إيقاف المزامنة السحابية');save();syBadge();renderSyncTab(tb)});
+ const cp=$('#sy_copy');if(cp)cp.onclick=()=>{const i=$('#sy_code');i.select();try{navigator.clipboard.writeText(i.value)}catch(e){document.execCommand('copy')}toast('تم النسخ')};
+}
+/* ربط جهاز جديد من شاشة الدخول (بدون بيانات محلية) */
+async function syLinkFromGate(code){const c=syDecode(code);if(!c)return 'الرمز غير صحيح';
+ syCfgSave(c);syReset();DB.persons=[];SY.cfg=c;SYNC_BUSY=true;
+ try{await syAuth();await syPull();syFixNumbers();try{localStorage.setItem(KEY,JSON.stringify(DB))}catch(e){}}catch(e){syCfgSave(null);return 'فشل الاتصال: '+(e.message||'')}
+ finally{SYNC_BUSY=false}
+ if(!DB.users.length){syCfgSave(null);syReset();return 'ما لقيت بيانات على هذا الحساب السحابي. فعّل المزامنة أول من الحاسوب'}
+ syStart();return ''}
+
 /* ========== الزبائن والمجهزون ========== */
 const TYPES={customer:'زبون',supplier:'مجهز',both:'زبون ومجهز'};
 function personModal(p,done,defType){
@@ -1308,7 +1438,7 @@ function parseCSV(text){
 }
 function viewSettings(){
  const v=$('#view');let tab=window._setTab||'rates';
- const ALLT={rates:'أسعار الصرف',defs:'القيم الافتراضية',look:'إعدادات المظهر والثيمات',users:'المستخدمون',log:'سجل الحركات',wh:'المخازن',exp:'المصاريف والمجموعات',open:'الصندوق (رصيد أول)',imp:'استيراد من CSV',bak:'النسخ الاحتياطي'};const tabs={};for(const k in ALLT)if(isAdmin()||k==='look')tabs[k]=ALLT[k];if(['colors','font','date'].includes(tab))tab='look';if(!tabs[tab])tab=isAdmin()?'rates':'look';
+ const ALLT={rates:'أسعار الصرف',defs:'القيم الافتراضية',look:'إعدادات المظهر والثيمات',users:'المستخدمون',sync:'المزامنة السحابية',log:'سجل الحركات',wh:'المخازن',exp:'المصاريف والمجموعات',open:'الصندوق (رصيد أول)',imp:'استيراد من CSV',bak:'النسخ الاحتياطي'};const tabs={};for(const k in ALLT)if(isAdmin()||k==='look')tabs[k]=ALLT[k];if(['colors','font','date'].includes(tab))tab='look';if(!tabs[tab])tab=isAdmin()?'rates':'look';
  function render(){
   v.innerHTML=`<div class="top"><h2>إعدادات النظام</h2></div><div class="tabs">${Object.keys(tabs).map(k=>`<button data-t="${k}" class="${k===tab?'on':''}">${tabs[k]}</button>`).join('')}</div><div class="card" id="tb"></div>`;
   $$('.tabs button',v).forEach(b=>b.onclick=()=>{tab=b.dataset.t;window._setTab=tab;render()});
@@ -1323,6 +1453,7 @@ function viewSettings(){
   if(tab==='look')renderLookTab(tb);
 
   if(tab==='users')renderUsersTab(tb);
+  if(tab==='sync')renderSyncTab(tb);
   if(tab==='log')renderLogTab(tb);
   if(tab==='wh'){tb.innerHTML=`<div class="tblw"><table><thead><tr><th>#</th><th>اسم المخزن</th><th></th></tr></thead><tbody>${DB.warehouses.map(w=>`<tr><td>${w.id}</td><td><input data-w="${w.id}" value="${esc(w.name)}"></td><td><button class="btn s d" data-dw="${w.id}">حذف</button></td></tr>`).join('')}</tbody></table></div><div class="bar" style="margin-top:10px"><input id="nw" placeholder="اسم مخزن جديد" style="max-width:260px"><button class="btn" id="aw">+ إضافة</button></div>`;
    $('#aw').onclick=()=>{const n=$('#nw').value.trim();if(!n)return;DB.warehouses.push({id:DB.seq.wh++,name:n});logAct('إضافة مخزن',n);save();render()};
@@ -1345,8 +1476,8 @@ function viewSettings(){
   if(tab==='bak'){tb.innerHTML=`<p>بياناتك محفوظة داخل المتصفح على هذا الجهاز. خذ نسخة احتياطية بشكل دوري، وخاصة قبل مسح بيانات المتصفح.</p><div class="bar"><button class="btn p" id="bx">تحميل نسخة احتياطية</button><label class="btn">استرجاع من نسخة<input type="file" id="bi" accept=".json" style="display:none"></label><button class="btn d" id="br">مسح كل البيانات</button></div><p class="muted" id="bs"></p>`;
    $('#bs').textContent=storageOK?'التخزين بالمتصفح يعمل.':'تنبيه: التخزين بالمتصفح غير متاح حالياً، البيانات تُفقد عند إغلاق الصفحة. حمّل نسخة احتياطية.';
    $('#bx').onclick=()=>download('نسخة-احتياطية-'+today()+'.json',JSON.stringify(DB),'application/json');
-   $('#bi').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.settings||!d.items)throw 0;confirmBox('سيتم استبدال كل البيانات الحالية بالنسخة. متابعة؟',()=>{if(!d.users||!d.users.length)d.users=DB.users;d.log=(d.log||[]);const me=CU.id;DB=d;logAct('استرجاع نسخة احتياطية','');save();const u=DB.users.find(x=>x.id===me&&x.active);if(!u){toast('تم الاسترجاع. سجّل الدخول من جديد');return logout()}CU=u;refreshLists();applyTheme();mountUserBox();toast('تم الاسترجاع');render()})}catch(x){toast('ملف غير صالح',1)}};r.readAsText(f)};
-   $('#br').onclick=()=>confirmBox('سيتم حذف كل البيانات نهائياً (بما فيها المستخدمون). هل أنت متأكد؟',()=>{DB=fresh();save();setSession(null);location.reload()})}
+   $('#bi').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.settings||!d.items)throw 0;confirmBox('سيتم استبدال كل البيانات الحالية بالنسخة'+(SY.cfg&&SY.cfg.on?' (والمزامنة مفعلة: سيُطبَّق الاسترجاع على كل الأجهزة)':'')+'. متابعة؟',()=>{if(!d.users||!d.users.length)d.users=DB.users;d.log=(d.log||[]);const me=CU.id;DB=d;logAct('استرجاع نسخة احتياطية','');save();const u=DB.users.find(x=>x.id===me&&x.active);if(!u){toast('تم الاسترجاع. سجّل الدخول من جديد');return logout()}CU=u;refreshLists();applyTheme();mountUserBox();toast('تم الاسترجاع');render()})}catch(x){toast('ملف غير صالح',1)}};r.readAsText(f)};
+   $('#br').onclick=()=>confirmBox('سيتم حذف كل البيانات نهائياً (بما فيها المستخدمون). هل أنت متأكد؟',()=>{DB=fresh();SYNC_BUSY=true;save();syReset();syCfgSave(null);setSession(null);location.reload()})}
  }
  render();
 }
@@ -1372,7 +1503,7 @@ function applyTheme(){const t=S().theme;if(t)document.documentElement.setAttribu
 const ROUTES={home:viewHome,sale:()=>viewDoc('sale'),purchase:()=>viewDoc('purchase'),transfer:()=>viewTransfer(),cash:()=>viewCash(),persons:viewPersons,items:viewItems,reports:viewReports,settings:viewSettings};
 function route(){if(!CU)return;document.body.classList.remove('nav-open');const h=(location.hash||'#home').slice(1);const r=ROUTES[h]||viewHome;refreshLists();$$('.side a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+h));const ov=$('#view');ov.replaceWith(ov.cloneNode(false));document.body.dataset.screen=h;try{r()}catch(e){console.error(e);$('#view').innerHTML='<div class="card"><b>حدث خطأ:</b> '+esc(e.message)+'</div>'};mountDW()}
 window.addEventListener('hashchange',route);
-document.addEventListener('DOMContentLoaded',()=>{$('#menuBtn').onclick=()=>document.body.classList.toggle('nav-open');$('#scrim').onclick=()=>document.body.classList.remove('nav-open');applyTheme();setInterval(dwTick,20000);if(restoreSession())enter();else showGate()});
+document.addEventListener('DOMContentLoaded',()=>{$('#menuBtn').onclick=()=>document.body.classList.toggle('nav-open');$('#scrim').onclick=()=>document.body.classList.remove('nav-open');applyTheme();setInterval(dwTick,20000);syStart();if(restoreSession())enter();else showGate()});
 
 /* ===== تثبيت كتطبيق على الموبايل (PWA) عند التشغيل من رابط https ===== */
 if(/^https?:/.test(location.protocol)){
